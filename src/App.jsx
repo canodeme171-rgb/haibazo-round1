@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 const DEFAULT_POINTS = 5
 const FADE_DURATION_MS = 3000
+const AUTO_PLAY_DELAY_MS = 650
+const MAX_POINTS = 100
 
 function createPoints(total) {
   return Array.from({ length: total }, (_, index) => ({
@@ -32,7 +34,14 @@ function App() {
   const [status, setStatus] = useState('idle')
   const [elapsedMs, setElapsedMs] = useState(0)
   const [now, setNow] = useState(() => Date.now())
+  const [autoPlay, setAutoPlay] = useState(false)
   const fadeTimers = useRef([])
+  const statusRef = useRef(status)
+
+  const updateStatus = useCallback((nextStatus) => {
+    statusRef.current = nextStatus
+    setStatus(nextStatus)
+  }, [])
 
   const totalPoints = useMemo(() => {
     const parsedValue = Number(pointInput)
@@ -41,7 +50,7 @@ function App() {
       return 0
     }
 
-    return parsedValue
+    return Math.min(parsedValue, MAX_POINTS)
   }, [pointInput])
 
   function clearFadeTimers() {
@@ -58,16 +67,18 @@ function App() {
     setNextPoint(1)
     setElapsedMs(0)
     setNow(Date.now())
-    setStatus('playing')
+    setAutoPlay(false)
+    updateStatus('playing')
   }
 
-  function removePointAfterFade(pointId) {
+  const removePointAfterFade = useCallback((pointId) => {
     const timerId = setTimeout(() => {
       setPoints((currentPoints) => {
         const remainingPoints = currentPoints.filter((point) => point.id !== pointId)
 
-        if (remainingPoints.length === 0) {
-          setStatus('cleared')
+        if (remainingPoints.length === 0 && statusRef.current === 'playing') {
+          updateStatus('cleared')
+          setAutoPlay(false)
         }
 
         return remainingPoints
@@ -81,9 +92,9 @@ function App() {
     }, FADE_DURATION_MS)
 
     fadeTimers.current.push(timerId)
-  }
+  }, [updateStatus])
 
-  function handlePointClick(pointId) {
+  const handlePointClick = useCallback((pointId) => {
     if (status !== 'playing') {
       return
     }
@@ -93,7 +104,8 @@ function App() {
     }
 
     if (pointId !== nextPoint) {
-      setStatus('gameOver')
+      updateStatus('gameOver')
+      setAutoPlay(false)
       return
     }
 
@@ -103,7 +115,7 @@ function App() {
     }))
     setNextPoint((currentPoint) => currentPoint + 1)
     removePointAfterFade(pointId)
-  }
+  }, [fadingPoints, nextPoint, removePointAfterFade, status, updateStatus])
 
   useEffect(() => {
     if (status !== 'playing') {
@@ -111,7 +123,7 @@ function App() {
     }
 
     const intervalId = setInterval(() => {
-      setElapsedMs((currentTime) => currentTime + 100)
+      setElapsedMs((currentElapsedMs) => currentElapsedMs + 100)
     }, 100)
 
     return () => clearInterval(intervalId)
@@ -132,6 +144,26 @@ function App() {
   }, [fadingPoints, status])
 
   useEffect(() => {
+    if (!autoPlay || status !== 'playing') {
+      return undefined
+    }
+
+    const nextActivePoint = points.find(
+      (point) => point.id === nextPoint && !fadingPoints[point.id],
+    )
+
+    if (!nextActivePoint) {
+      return undefined
+    }
+
+    const timeoutId = setTimeout(() => {
+      handlePointClick(nextActivePoint.id)
+    }, AUTO_PLAY_DELAY_MS)
+
+    return () => clearTimeout(timeoutId)
+  }, [autoPlay, fadingPoints, handlePointClick, nextPoint, points, status])
+
+  useEffect(() => {
     return () => clearFadeTimers()
   }, [])
 
@@ -144,8 +176,10 @@ function App() {
           <span>Points:</span>
           <input
             min="1"
+            max={MAX_POINTS}
             type="number"
             value={pointInput}
+            disabled={status === 'playing'}
             onChange={(event) => setPointInput(event.target.value)}
           />
         </label>
@@ -157,7 +191,14 @@ function App() {
 
         <div className="button-row">
           <button type="button" onClick={resetGame} disabled={totalPoints === 0}>
-            {status === 'idle' ? 'Start' : 'Restart'}
+            {status === 'idle' ? 'Play' : 'Restart'}
+          </button>
+          <button
+            type="button"
+            disabled={status !== 'playing'}
+            onClick={() => setAutoPlay((currentValue) => !currentValue)}
+          >
+            Auto Play {autoPlay ? 'OFF' : 'ON'}
           </button>
         </div>
 
